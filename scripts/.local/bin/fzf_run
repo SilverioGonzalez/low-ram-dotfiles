@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+# Gather all unique executable commands available in your system $PATH
+COMMANDS=$(IFS=:; find $PATH -maxdepth 1 -executable -type f,l -printf '%f\n' 2>/dev/null | sort -u)
+
+# Pipe commands into fzf matching the unified Catppuccin styling
+CHOICE=$(echo "$COMMANDS" | fzf \
+    --prompt="🏃 Run: " \
+    --height=60% \
+    --layout=reverse \
+    --border=rounded \
+    --info=inline \
+    --margin=1% \
+    --color='bg:-1,bg+:#11111b,spinner:#f5e0dc,hl:#f38ba8,fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc,marker:#f5e0dc,prompt:#89b4fa,hl+:#f38ba8,border:#313244')
+
+# Run the command in the background if a selection was made
+if [ -n "$CHOICE" ]; then
+    eval "$CHOICE" &>/dev/null &
+    disown
+fi

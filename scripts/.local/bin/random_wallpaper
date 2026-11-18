@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+WALLPAPER_DIR="$HOME/wallpaper/"
+
+# 1. Automatically grab the active monitor name
+MONITOR=$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')
+# Fallback to the first found monitor if jq selection isn't populated
+if [ -z "$MONITOR" ]; then
+  MONITOR=$(hyprctl monitors | awk '/^Monitor/ {print $2}' | head -n 1)
+fi
+
+# 2. Safely find the current wallpaper filename to avoid repeating it
+CURRENT_WALLPAPER=$(hyprctl hyprpaper listactive | awk '{print $2}' | head -n 1)
+CURRENT_BASE=$(basename "$CURRENT_WALLPAPER" 2>/dev/null || echo "none")
+
+# 3. Choose a new random wallpaper
+if [ "$CURRENT_BASE" != "none" ]; then
+  WALLPAPER=$(find "$WALLPAPER_DIR" -type f ! -name "$CURRENT_BASE" | shuf -n 1)
+else
+  WALLPAPER=$(find "$WALLPAPER_DIR" -type f | shuf -n 1)
+fi
+
+# 4. Apply the wallpaper using the verified strict syntax
+if [ -n "$WALLPAPER" ] && [ -n "$MONITOR" ]; then
+  hyprctl hyprpaper wallpaper "$MONITOR, $WALLPAPER"
+else
+  echo "Error: Could not determine monitor or no wallpaper found."
+fi

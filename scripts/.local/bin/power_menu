@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+# Define the options to show in the TUI
+options=" Lock\n Logout\n Reboot\n Shutdown"
+
+# Launch fzf with unified Catppuccin styling and margins
+choice=$(echo -e "$options" | fzf \
+    --height=25% \
+    --reverse \
+    --border=rounded \
+    --margin=1% \
+    --prompt=" System Action: " \
+    --header="Use arrows or type to filter, press Enter to execute" \
+    --color='bg:-1,bg+:#11111b,spinner:#f5e0dc,hl:#f38ba8,fg:#cdd6f4,header:#f38ba8,info:#cba6f7,pointer:#f5e0dc,marker:#f5e0dc,prompt:#89b4fa,hl+:#f38ba8,border:#313244')
+
+# Route the selection to your exact commands
+case "$choice" in
+    *Lock)
+        hyprlock
+        ;;
+    *Logout)
+        loginctl terminate-user "$USER"
+        ;;
+    *Reboot)
+        hyprshutdown -t 'Restarting...' --post-cmd 'systemctl reboot'
+        ;;
+    *Shutdown)
+        hyprshutdown -t 'Shutting down...' --post-cmd 'systemctl poweroff'
+        ;;
+    *)
+        exit 0
+        ;;
+esac
