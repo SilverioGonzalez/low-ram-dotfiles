@@ -1,0 +1,97 @@
+{
+    "$schema": "https://github.com",
+    "logo": {
+        "type": "builtin",
+        "padding": {
+            "top": 5,
+            "left": 3
+        }
+    },
+    "display": {
+        "color": {
+            "keys": "magenta"
+        }
+    },
+    "modules": [
+        "break",
+        {
+            "type": "custom",
+            "format": "\u001b[90mHardware"
+        },
+        {
+            "type": "host",
+            "key": "  ›  PC  "
+        },
+        {
+            "type": "cpu",
+            "format": "{1}",
+            "key": "  ›  CPU  "
+        },
+        {
+            "type": "gpu",
+            "format": "{2}",
+            "key": "  ›  GPU  "
+        },
+        {
+            "type": "memory",
+            "key": "  ›  Memory  "
+        },
+        {
+            "type": "disk",
+            "key": "  ›  Disk  "
+        },
+        "break",
+        {
+            "type": "custom",
+            "format": "\u001b[90mSoftware"
+        },
+        {
+            "type": "os",
+            "key": "  ›  OS  "
+        },
+        {
+            "type": "kernel",
+            "key": "  ›  Kernel  "
+        },
+        {
+            "type": "packages",
+            "key": "  ›  Packages  "
+        },
+        {
+            "type": "shell",
+            "key": "  ›  Shell  "
+        },
+        {
+            "type": "wm",
+            "key": "  ›  WM  "
+        },
+        {
+            "type": "wmtheme",
+            "key": "  ›  WM Theme  "
+        },
+        {
+            "type": "terminal",
+            "key": "  ›  Terminal  "
+        },
+        {
+            "type": "terminalfont",
+            "key": "  ›  Terminal Font ",
+            "format": "{2}"
+        },
+        {
+            "type": "command",
+            "key": "  ›  OS Age  ",
+            "text": "birth_install=$(stat -c %W /); current=$(date +%s); time_progression=$((current - birth_install)); days_difference=$((time_progression / 86400)); echo $days_difference days"
+        },
+        {
+            "type": "uptime",
+            "key": "  ›  Uptime  "
+        },
+        {
+            "type": "colors",
+            "paddingLeft": 2,
+            "symbol": "circle"
+        },
+        "break"
+    ]
+}
