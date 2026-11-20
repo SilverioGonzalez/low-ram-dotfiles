@@ -13,4 +13,5 @@ hl.on("hyprland.start", function()
 	-- 2. Clipboard tracking daemons
 	hl.exec_cmd('bash -c "wl-paste --type text --watch cliphist store"')
 	hl.exec_cmd('bash -c "wl-paste --type image --watch cliphist store"')
+  hl.exec_cmd(launcher .. " -d")
 end)

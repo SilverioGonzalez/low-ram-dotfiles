@@ -1,21 +1,74 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-# Find all .desktop files, extract Name and Exec lines, and pipe into fzf
-selected=$(grep -hE "^(Name|Exec)=" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | \
-awk '
-    /^Name=/ { sub(/^Name=/, ""); name=$0 }
-    /^Exec=/ && name {
-        sub(/^Exec=/, "")
-        # Strip desktop field codes like %u, %U, %f, %F
-        gsub(/ %[uUfFdDnNickvm]/, "")
-        print name "\t" $0
-        name=""
-    }
-' | sort -u -t$'\t' -k1,1 | fzf --delimiter=$'\t' --with-nth=1 --prompt="Launch: " --layout=reverse --border)
+# Application directories, in priority order.
+APP_DIRS=(
+    "${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+)
 
-# Exit cleanly if Escape/Ctrl+C was pressed
-[ -z "$selected" ] && exit 0
+IFS=: read -ra SYSTEM_DIRS <<< "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
-# Extract the command and launch it detached via Hyprland
-cmd=$(echo "$selected" | cut -f2-)
-hyprctl dispatch exec "$cmd" >/dev/null 2>&1
+for dir in "${SYSTEM_DIRS[@]}"; do
+    APP_DIRS+=("$dir/applications")
+done
+
+declare -A seen=()
+entries=""
+
+for dir in "${APP_DIRS[@]}"; do
+    [[ -d "$dir" ]] || continue
+
+    while IFS= read -r -d '' file; do
+        id="${file##*/}"
+
+        # User applications override system applications.
+        [[ ${seen[$id]+yes} ]] && continue
+        seen[$id]=1
+
+        name=$(
+            awk '
+                /^\[Desktop Entry\]$/ { entry=1; next }
+                /^\[/ { entry=0 }
+                entry && /^Type=/ && $0 != "Type=Application" {
+                    invalid=1
+                }
+                entry && /^Name=/ && name == "" {
+                    name=substr($0, 6)
+                }
+                entry && /^(Hidden|NoDisplay)=true$/ {
+                    hidden=1
+                }
+                END {
+                    if (!invalid && !hidden && name != "")
+                        print name
+                }
+            ' "$file"
+        )
+
+        [[ -n "$name" ]] || continue
+
+        entries+="${name}"$'\t'"${file}"$'\n'
+
+    done < <(find -L "$dir" -type f -name '*.desktop' -print0 2>/dev/null)
+done
+
+[[ -n "$entries" ]] || exit 0
+
+selected=$(
+    printf '%s' "$entries" |
+        fzf \
+            --delimiter=$'\t' \
+            --with-nth=1 \
+            --prompt="drun> " \
+            --layout=reverse \
+            --border
+) || exit 0
+
+[[ -n "$selected" ]] || exit 0
+
+IFS=$'\t' read -r name desktop_file <<< "$selected"
+
+# Launch the desktop entry through GIO.
+gio launch "$desktop_file" \
+    >/dev/null 2>&1 </dev/null &
+

@@ -17,6 +17,11 @@ require("modules.permissions")
 -- Set programs that you use
 local terminal = "ghostty"
 local browser = "firefox"
+--local launcher = "rofi -show drun"
+local launcher = "hyprlauncher"
+local writer = "neo-writing"
+hl.bind("SUPER + W", hl.dsp.exec_cmd(writer))
+
 
 -------------------------------
 ---- ENVIRONMENT VARIABLES ----
@@ -69,19 +74,19 @@ hl.bind(mainMod .. " + l", hl.dsp.focus({ direction = "right" }))
 hl.bind("F11", hl.dsp.exec_cmd("amixer -q set Master 5%-"), { repeating = true, locked = true })
 hl.bind("F12", hl.dsp.exec_cmd("amixer -q set Master 5%+"), { repeating = true, locked = true })
 
--- FZF run / wallpaper / power menu keybinds (Explicit Ghostty Flag Layout)
-hl.bind(
-	mainMod .. " + D",
-	hl.dsp.exec_cmd(
-		string.format("%s --class=com.custom.centertui --command=\"bash %s/.local/bin/launch_app\"", terminal, home)
-	)
-)
-hl.bind(
-	mainMod .. " + A",
-	hl.dsp.exec_cmd(
-		string.format("%s --class=com.custom.centertui --command=\"bash %s/.local/bin/add_app\"", terminal, home)
-	)
-)
+-- prose editor
+hl.bind("SUPER + P", hl.dsp.exec_cmd(writer))
+
+--app launcher
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(launcher))
+
+-- FZF/ wallpaper / power menu keybinds (Explicit Ghostty Flag Layout)
+--hl.bind(
+	--mainMod .. " + D",
+	--hl.dsp.exec_cmd(
+		--string.format("%s --class=com.custom.centertui --command=\"bash %s/.local/bin/laun--ch_app\"", terminal, home)
+	--)
+--)
 hl.bind(
 	mainMod .. " + W",
 	hl.dsp.exec_cmd(

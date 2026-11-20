@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/launch_app_manager"
+REGISTRY="$CONFIG_DIR/apps.tsv"
+USER_APPS_DIR="$HOME/.local/share/applications"
+SYS_APPS_DIR="/usr/share/applications"
+
+mkdir -p "$CONFIG_DIR" "$USER_APPS_DIR"
+touch "$REGISTRY"
+
+slugify() {
+  printf '%s' "$1" \vert{} tr '[:upper:]' '[:lower:]' \vert{} sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+}
+
+clean_desktop_entries() {
+  local f exec_line cleaned_token removed=0
+
+  [ -d "$USER_APPS_DIR" ] || return 0
+
+  for f in "$USER_APPS_DIR"/*.desktop; do
+    [ -e "$f" ] || continue
+
+    exec_line=$(awk -F= '/^[Desktop Entry]/{in_e=1;next} /^\[/{if(in_e)exit} in_e && $1=="Exec"{print substr($0,6); exit}' "$f")
+    [ -z "$exec_line" ] && continue
+
+    # Strip desktop field codes (%f, %F, %u, %U, etc.) and outer quotes on the executable
+    cleaned_token=$(
+      printf '%s\n' "$exec_line" |
+        sed -E 's/ ?%[a-zA-Z]//g' |
+        awk '{
+          gsub(/^["'\'']|["'\'']$/, "", $1)
+          print $1
+        }'
+    )
+    cleaned_token="${cleaned_token/#\~/$HOME}"
+
+    # Skip system-hide stubs (Exec=true)
+    [ "$cleaned_token" = "true" ] && continue
+
+    # Edge case: Flatpak wrapper ("flatpak run [--args...] <app-id>")
+    if [ "$cleaned_token" = "flatpak" ]; then
+      if command -v flatpak >/dev/null 2>&1; then
+        local app_id
+        app_id=$(
+          printf '%s\n' "$exec_line" |
+            sed -E 's/ ?%[a-zA-Z]//g' |
+            awk '
+              {
+                seen_run = 0
+                for (i = 1; i <= NF; i++) {
+                  if ($i == "flatpak") continue
+                  if ($i == "run" && seen_run == 0) { seen_run = 1; continue }
+                  if (seen_run == 1 && $i !~ /^-/) { print$i; exit }
+                }
+              }
+            '
+        )
+        if [ -n "$app_id" ] && ! flatpak info "$app_id" >/dev/null 2>&1; then
+          echo "launch_app_manager: removing stale Flatpak desktop entry ($app_id not installed):$f"
+          rm -f "$f"
+          removed=1
+        fi
+      fi
+      continue
+    fi
+
+    # Edge case: Snap wrapper ("snap run <snap-name>")
+    if [ "$cleaned_token" = "snap" ]; then
+      if command -v snap >/dev/null 2>&1; then
+        local snap_name
+        snap_name=$(
+          printf '%s\n' "$exec_line" |
+            sed -E 's/ ?%[a-zA-Z]//g' |
+            awk '
+              {
+                for (i = 1; i <= NF; i++) {
+                  if ($i == "run" && (i + 1) <= NF) { print $(i + 1); exit }
+                }
+              }
+            '
+        )
+        if [ -n "$snap_name" ] && ! snap list "$snap_name" >/dev/null 2>&1; then
+          echo "launch_app_manager: removing stale Snap desktop entry ($snap_name not installed):$f"
+          rm -f "$f"
+          removed=1
+        fi
+      fi
+      continue
+    fi
+
+    # Explicit file/binary path (e.g. /opt/app/bin or ~/Applications/foo.AppImage)
+    if [[ "$cleaned_token" == /* ]]; then
+      if [ ! -e "$cleaned_token" ]; then
+        echo "launch_app_manager: removing stale desktop entry (missing target '$cleaned_token'):$f"
+        rm -f "$f"
+        removed=1
+      fi
+    else
+      # Bare command name in PATH
+      if ! command -v "$cleaned_token" >/dev/null 2>&1; then
+        echo "launch_app_manager: removing stale desktop entry (command not found '$cleaned_token'):$f"
+        rm -f "$f"
+        removed=1
+      fi
+    fi
+  done
+
+  [ "$removed" -eq 0 ] && echo "launch_app_manager: no stale user .desktop entries found."
+}
+
+clean_broken() {
+  local broken_links
+  broken_links=$(find "$USER_APPS_DIR" -xtype l 2>/dev/null || true)
+
+  if [ -n "$broken_links" ]; then
+    echo "launch_app_manager: removing broken .desktop symlinks:"
+    printf '%s\n' "$broken_links"
+    find "$USER_APPS_DIR" -xtype l -delete 2>/dev/null || true
+  else
+    echo "launch_app_manager: no broken .desktop symlinks found in $USER_APPS_DIR."
+  fi
+
+  clean_desktop_entries
+
+  local tmp_file
+  tmp_file=$(mktemp)
+  awk -F'\t' '
+    {
+      kind = $2
+      target = $3
+      src = $4
+      if (kind == "script" && target != "" && system("[ -e \"" target "\" ]") != 0) next
+      if (src != "" && src != "registry" && system("[ -e \"" src "\" ]") != 0) next
+      print $0
+    }
+  ' "$REGISTRY" > "$tmp_file"
+  mv "$tmp_file" "$REGISTRY"
+  echo "launch_app_manager: registry cleanup complete."
+}
+
+add_desktop() {
+  local name exec_cmd term_choice icon_name slug desktop_file
+  read -r -p "Display name (e.g. Vesktop): " name
+  read -r -p "Exec command (e.g. vesktop or ~/Apps/Foo.AppImage): " exec_cmd
+  [ -z "$name" ] \vert{}\vert{} [ -z "$exec_cmd" ] && {
+    echo "launch_app_manager: name and command are required." >&2
+    return 1
+  }
+
+  exec_cmd="${exec_cmd/#\~/$HOME}"
+  read -r -p "Run in terminal? [y/N]: " term_choice
+  read -r -p "Icon name or path (optional): " icon_name
+
+  slug=$(slugify "$name")
+  [ -z "$slug" ] && slug="custom-app"
+  desktop_file="$USER_APPS_DIR/${slug}.desktop"
+
+  {
+    printf '[Desktop Entry]\n'
+    printf 'Type=Application\n'
+    printf 'Name=%s\n' "$name"
+    printf 'Exec=%s\n' "$exec_cmd"
+    if [[ "${term_choice,,}" == "y" \vert{}\vert{} "${term_choice,,}" == "yes" ]]; then
+      printf 'Terminal=true\n'
+    else
+      printf 'Terminal=false\n'
+    fi
+    [ -n "$icon_name" ] && printf 'Icon=\%s\n' "$icon_name"
+    printf 'Categories=Utility;\n'
+  } > "$desktop_file"
+
+  echo "launch_app_manager: created desktop entry: $desktop_file"
+}
+
+remove_desktop() {
+  local entries chosen file_path app_name
+
+  entries=$(
+    for f in "$USER_APPS_DIR"/*.desktop; do
+      [ -e "$f" ] || continue
+      app_name=$(awk -F= '/^[Desktop Entry]/{in_e=1;next} /^\[/{if(in_e)exit} in_e && $1=="Name"{print substr($0,6); exit}' "$f")
+      printf '%s\t%s\n' "${app_name:-$(basename "$f")}" "$f"
+    done
+  )
+
+  [ -z "$entries" ] && {
+    echo "launch_app_manager: no user .desktop files in $USER_APPS_DIR to remove." >&2
+    return 0
+  }
+
+  chosen=$(
+    printf '%s\n' "$entries" |
+      awk -F'\t' '{ printf "%-32s %s\t%s\n", $1, $2, $2 }' |
+      fzf --delimiter=$'\t' --with-nth=1 --prompt="remove desktop app> " --layout=reverse --border
+  )
+
+  [ -z "$chosen" ] && return 0
+  file_path=$(printf '\%s\n' "$chosen" | cut -f2)
+
+  [ -n "$file_path" ] && [ -f "$file_path" ] && rm -f "$file_path"
+  echo "launch_app_manager: removed $file_path"
+}
+
+hide_system_desktop() {
+  local entries chosen desktop_basename target_override app_name
+
+  [ -d "$SYS_APPS_DIR" ] || {
+    echo "launch_app_manager: $SYS_APPS_DIR not found." >&2
+    return 1
+  }
+
+  entries=$(
+    for f in "$SYS_APPS_DIR"/*.desktop; do
+      [ -e "$f" ] || continue
+      app_name=$(awk -F= '/^[Desktop Entry]/{in_e=1;next} /^\[/{if(in_e)exit} in_e && $1=="Name"{print substr($0,6); exit}' "$f")
+      [ -n "$app_name" ] && printf '\%s\t\%s\n' "$app_name" "$(basename "$f")"
+    done | sort -u
+  )
+
+  [ -z "$entries" ] && return 0
+
+  chosen=$(
+    printf '%s\n' "$entries" |
+      awk -F'\t' '{ printf "%-32s (%s)\t%s\n", $1, $2, $2 }' |
+      fzf --delimiter=$'\t' --with-nth=1 --prompt="hide system app> " --layout=reverse --border
+  )
+
+  [ -z "$chosen" ] && return 0
+  desktop_basename=$(printf '\%s\n' "$chosen" | cut -f2)
+  target_override="$USER_APPS_DIR/$desktop_basename"
+
+  printf '[Desktop Entry]\nType=Application\nName=%s\nExec=true\nNoDisplay=true\n' "${desktop_basename\%.desktop}" > "$target_override"
+  echo "launch_app_manager: hidden system app via override: $target_override"
+}
+
+add_web() {
+  local name url
+  read -r -p "Display name (e.g. Boot.dev): " name
+  read -r -p "URL (e.g. https://boot.dev): " url
+  [ -z "$name" ] \vert{}\vert{} [ -z "$url" ] && { echo "launch_app_manager: name and URL are required." >&2; return 1; }
+  [[ "$url" =~ ^https?:// ]] \vert{}\vert{} url="https://$url"
+  printf '%s\tweb\t%s\tregistry\n' "$name" "$url" >> "$REGISTRY"
+  echo "launch_app_manager: added website: $name ->$url"
+}
+
+add_script() {
+  local name script_path
+  read -r -p "Display name: " name
+  read -r -p "Script path: " script_path
+  script_path="${script_path/#\~/$HOME}"
+  [ -z "$name" ] \vert{}\vert{} [ -z "$script_path" ] && { echo "launch_app_manager: name and path are required." >&2; return 1; }
+  [ -f "$script_path" ] || { echo "launch_app_manager: file does not exist: $script_path" >&2; return 1; }
+  chmod +x "$script_path"
+  printf '%s\tscript\t%s\t%s\n' "$name" "$script_path" "$script_path" >> "$REGISTRY"
+  echo "launch_app_manager: added script: $name ->$script_path"
+}
+
+add_tui() {
+  local name cmd
+  read -r -p "Display name (e.g. btop): " name
+  read -r -p "Command to run in terminal (e.g. btop or nvim): " cmd
+  [ -z "$name" ] \vert{}\vert{} [ -z "$cmd" ] && { echo "launch_app_manager: name and command are required." >&2; return 1; }
+  printf '%s\ttui\t%s\tregistry\n' "$name" "$cmd" >> "$REGISTRY"
+  echo "launch_app_manager: added TUI app: $name ->$cmd"

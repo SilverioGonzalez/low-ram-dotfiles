@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+import argparse
+import csv
+import datetime
+import operator
+import re
+from collections import defaultdict
+from pathlib import Path
+
+CALCURE_EVENTS = Path.home() / ".config/calcure/events.csv"
+ENTRY_RE = re.compile(r"^\s*([A-Za-z0-9_-]+)\s+(\d+)\s*$")
+
+get_col0 = operator.itemgetter(0)
+get_col1 = operator.itemgetter(1)
+get_col2 = operator.itemgetter(2)
+get_col3 = operator.itemgetter(3)
+get_col4 = operator.itemgetter(4)
+get_proj = operator.itemgetter(1)
+
+
+def parse_calcure_events():
+    entries = list()
+    if not CALCURE_EVENTS.exists():
+        return entries
+
+    with CALCURE_EVENTS.open("r", newline="", encoding="utf-8", errors="ignore") as fh:
+        for row in csv.reader(fh):
+            if len(row) < 5:
+                continue
+            try:
+                year = int(get_col1(row).strip())
+                month = int(get_col2(row).strip())
+                day = int(get_col3(row).strip())
+                date_str = datetime.date(year, month, day).isoformat()
+            except ValueError:
+                continue
+
+            title = get_col4(row).strip()
+            match = ENTRY_RE.match(title)
+            if not match:
+                continue
+
+            project = match.group(1)
+            words = int(match.group(2))
+            entries.append((date_str, project, words))
+
+    return entries
+
+
+def show_stats(days=7, project_filter=None):
+    entries = parse_calcure_events()
+    if project_filter:
+        entries = [e for e in entries if get_proj(e).lower() == project_filter.lower()]
+
+    today = datetime.date.today().isoformat()
+    cutoff = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
+
+    by_project_today = defaultdict(int)
+    by_project_recent = defaultdict(int)
+    by_project_all = defaultdict(int)
+
+    today_total = 0
+    recent_total = 0
+    all_time_total = 0
+
+    for d, proj, w in entries:
+        all_time_total += w
+        by_project_all[proj] += w
+
+        if d == today:
+            today_total += w
+            by_project_today[proj] += w
+        if cutoff <= d <= today:
+            recent_total += w
+            by_project_recent[proj] += w
+
+    header = f"Writing Stats ({project_filter})" if project_filter else "Writing Stats (All Projects)"
+    print(header)
+    print("-" * len(header))
+    print(f"Today ({today}): {today_total:,} words")
+    print(f"Last {days} days:     {recent_total:,} words")
+    print(f"All-time total:  {all_time_total:,} words")
+
+    if by_project_all:
+        print("\nBreakdown by project:")
+        print(f"  {'Project':<16} {'Today':>10} {f'Last {days}d':>10} {'All-Time':>10}")
+        for proj in sorted(by_project_all):
+            print(
+                f"  {proj:<16} "
+                f"{by_project_today[proj]:>10,} "
+                f"{by_project_recent[proj]:>10,} "
+                f"{by_project_all[proj]:>10,}"
+            )
+    else:
+        print("\nNo word count entries found in ~/.config/calcure/events.csv.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Display Calcure writing word count stats.")
+    parser.add_argument("-n", "--days", type=int, default=7, help="Rolling window in days (default: 7)")
+    parser.add_argument("-p", "--project", help="Filter stats to one project")
+    args = parser.parse_args()
+    show_stats(args.days, args.project)
+
+
+if __name__ == "__main__":
+    main()
